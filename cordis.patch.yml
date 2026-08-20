@@ -1,0 +1,22 @@
+# dsh-plugin-token-usage — QwenPaw-style cross-session token usage.
+#
+# Dual-face plugin:
+#   - node half (lib/index.js): aggregates session-log usage into
+#     (date, provider, model) buckets, serves /usage, and (phase 2) registers
+#     the Web panel's data endpoint GET /api/token-usage on ctx.webServer.
+#   - client half (lib/client.js, built by build.mjs): a "Token 用量" section
+#     in the Web settings page (registered into the settings.section slot),
+#     fetched by the dsh-client-modules node half via the dsh.client
+#     declaration in package.json.
+#
+# The entry is inserted into the profile's plugin roster; the dsh.client
+# declaration + exports["./client"] make the browser bundle discoverable.
+- insert:
+    - id: token-usage
+      name: 'dsh-plugin-token-usage'
+      config:
+        defaultDays: 30
+        backfillIntervalSec: 30
+        enableCommand: true
+        enablePanel: true
+        verbose: false

@@ -1,7 +1,7 @@
 {
   "name": "dsh-plugin-token-usage",
   "description": "DSH plugin for QwenPaw-style cross-session token usage statistics (/usage command + Web GUI panel)",
-  "version": "0.0.1",
+  "version": "0.2.0",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
