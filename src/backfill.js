@@ -135,7 +135,11 @@ export function listSessionFiles(root) {
       .filter((e) => e.isDirectory())
       .map((e) => e.name);
     for (const s of sessions) {
-      for (const name of ['session.jsonl.zstd', 'session.jsonl']) {
+      // v2 roots first (their watermarks already exist in store.progress, so
+      // sessions that have both roots keep counting exactly once from the v2
+      // file); v3/current roots (dsh >= 0.1.6) are picked up only when no v2
+      // root exists in the session directory — never both, never twice.
+      for (const name of ['session.jsonl.zstd', 'session.jsonl', 'session.v3.jsonl.zstd', 'session.v3.jsonl']) {
         const p = join(root, project, s, name);
         try {
           if (statSync(p).isFile()) {
