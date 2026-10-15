@@ -190,3 +190,52 @@ test('listSessionFiles finds zstd and raw transcripts', () => {
   assert.ok(files.some((f) => f.endsWith('projB/sess2/session.jsonl')));
   rmSync(root, { recursive: true, force: true });
 });
+
+// --- session-format v4 regression (dsh >= 0.2.x migration) ---------------
+
+function writeNamedSession(root, project, sessionId, name, events) {
+  const dir = join(root, project, sessionId);
+  mkdirSync(dir, { recursive: true });
+  const lines = sessionLines(sessionId, events);
+  writeFileSync(join(dir, name), zstdCompressSync(lines.join('\n') + '\n'));
+  return join(dir, name);
+}
+
+test('listSessionFiles prefers the v4 file over its frozen v3 sibling', () => {
+  const root = mkdtempSync(join(tmpdir(), 'tu-v4-'));
+  const dir = join(root, 'projA', 'sess1');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'session.v3.jsonl.zstd'), zstdCompressSync('{}\n'));
+  const v4 = join(dir, 'session.v4.jsonl.zstd');
+  writeFileSync(v4, zstdCompressSync('{}\n'));
+  const files = listSessionFiles(root);
+  assert.deepEqual(files, [v4], 'only the authoritative v4 file is listed');
+  rmSync(root, { recursive: true, force: true });
+});
+
+test('v4 migration inherits the v3 watermark and never double-counts', () => {
+  const root = mkdtempSync(join(tmpdir(), 'tu-mig-'));
+  const store = new TokenUsageStore({ filePath: join(root, 'state.json'), flushDelayMs: 60_000 });
+  writeNamedSession(root, 'projA', 'sess1', 'session.v3.jsonl.zstd', msgEvents('sess1', 4));
+  const r1 = backfillOnce({ store, root });
+  const callsAfterV3 = [...store.buckets.values()]
+    .reduce((n, day) => n + [...day.values()].reduce((m, b) => m + (b.calls || 0), 0), 0);
+  assert.equal(callsAfterV3, 4, 'v3 history counted once');
+
+  // Simulate the on-disk migration: a complete v4 copy appears next to the
+  // (still present) frozen v3 file.
+  writeNamedSession(root, 'projA', 'sess1', 'session.v4.jsonl.zstd', msgEvents('sess1', 4));
+  const r2 = backfillOnce({ store, root });
+  assert.equal(r2.ingested, 0, 'migrated history is skipped via the inherited hiSeq');
+
+  // New turns (seqs past the inherited watermark) are picked up exactly once.
+  const v4 = join(root, 'projA', 'sess1', 'session.v4.jsonl.zstd');
+  const more = msgEvents('sess1', 2).map((e) => ({ ...e, seq: e.seq + 40 }));
+  writeFileSync(v4, zstdCompressSync(sessionLines('sess1', more).join('\n') + '\n'));
+  const r3 = backfillOnce({ store, root });
+  assert.equal(r3.ingested, more.length, 'only the new v4 events are ingested');
+  const callsTotal = [...store.buckets.values()]
+    .reduce((n, day) => n + [...day.values()].reduce((m, b) => m + (b.calls || 0), 0), 0);
+  assert.equal(callsTotal, 6, '4 migrated + 2 new calls, no double count');
+  rmSync(root, { recursive: true, force: true });
+});

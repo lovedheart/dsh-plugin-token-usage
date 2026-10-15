@@ -44,7 +44,23 @@ export function backfillOnce({ store, root, log = () => {} }) {
     return result;
   }
   for (const file of files) {
-    const mark = store.progress[file] ?? { hiSeq: -1, framesIngested: 0 };
+    let mark = store.progress[file] ?? { hiSeq: -1, framesIngested: 0 };
+    if (store.progress[file] === undefined && file.includes('.v4.')) {
+      // First pass over a format-migrated session. Its earlier generations
+      // (v2/v3) were already counted and either still sit next to the v4 file
+      // or were dropped by the migration, leaving their watermark only under
+      // the old path. Inherit the highest seq ever recorded for this session
+      // directory, then re-decode from frame 0 (the existing crash-recovery
+      // path) so migrated history is skipped by seq, never counted twice.
+      const dir = file.slice(0, file.lastIndexOf('/'));
+      let inherited = -1;
+      for (const [path, prev] of Object.entries(store.progress)) {
+        if (path.startsWith(dir + '/') && prev && typeof prev.hiSeq === 'number' && prev.hiSeq > inherited) {
+          inherited = prev.hiSeq;
+        }
+      }
+      if (inherited >= 0) mark = { hiSeq: inherited, framesIngested: 0 };
+    }
     result.scanned += 1;
     try {
       const r = processFile(file, mark, store);
@@ -135,11 +151,13 @@ export function listSessionFiles(root) {
       .filter((e) => e.isDirectory())
       .map((e) => e.name);
     for (const s of sessions) {
-      // v2 roots first (their watermarks already exist in store.progress, so
-      // sessions that have both roots keep counting exactly once from the v2
-      // file); v3/current roots (dsh >= 0.1.6) are picked up only when no v2
-      // root exists in the session directory — never both, never twice.
-      for (const name of ['session.jsonl.zstd', 'session.jsonl', 'session.v3.jsonl.zstd', 'session.v3.jsonl']) {
+      // Newest format first (never both, never twice): v4 roots (dsh >= 0.2.x
+      // session-format migration) are authoritative and complete, so a
+      // directory that has a v4 file never falls back to its frozen v3
+      // snapshot; v3 roots (dsh >= 0.1.6) are picked up only when no v4 file
+      // exists; v2 roots last (their watermarks already exist in
+      // store.progress).
+      for (const name of ['session.v4.jsonl.zstd', 'session.v4.jsonl', 'session.jsonl.zstd', 'session.jsonl', 'session.v3.jsonl.zstd', 'session.v3.jsonl']) {
         const p = join(root, project, s, name);
         try {
           if (statSync(p).isFile()) {
